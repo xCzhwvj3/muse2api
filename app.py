@@ -88,7 +88,11 @@ app.add_middleware(CORSMiddleware,
                    max_age=600)
 
 store = Store(CFG)
-engine = MuseEngine(CFG)
+if CFG.engine_mode == "protocol":
+    from protocol_engine import ProtocolEngine
+    engine = ProtocolEngine(CFG)
+else:
+    engine = MuseEngine(CFG)
 engine.proxy_resolver = lambda aid: (store.get_account(aid) or {}).get("proxy")
 
 
@@ -1270,9 +1274,12 @@ def healthz():
 @app.get("/readyz")
 def readyz():
     accs = [a for a in store.list_accounts() if a.get("enabled", True)]
+    running = engine.is_running() if hasattr(engine, "is_running") else bool(engine.proc and engine.proc.poll() is None)
     return {"status": "ready" if accs else "no_account",
             "accounts": len(accs),
-            "browser_running": bool(engine.proc and engine.proc.poll() is None)}
+            "engine_mode": CFG.engine_mode,
+            "engine_running": running,
+            "browser_running": running}
 
 
 @app.get("/v1/models")
@@ -1932,6 +1939,7 @@ def _clear_media_thumbnail(name: str):
 @app.get("/admin/status")
 def admin_status(_=Depends(auth)):
     base = _public_base()
+    running = engine.is_running() if hasattr(engine, "is_running") else bool(engine.proc and engine.proc.poll() is None)
     return {
         "accounts": store.list_accounts(),
         "stats": store.stats(),
@@ -1939,10 +1947,13 @@ def admin_status(_=Depends(auth)):
         "tasks": store.list_tasks(20),
         "media_count": len(os.listdir(CFG.media_dir))
         if os.path.isdir(CFG.media_dir) else 0,
-        "browser_running": bool(engine.proc and engine.proc.poll() is None),
+        "engine_mode": CFG.engine_mode,
+        "engine_running": running,
+        "browser_running": running,
         "essential_cookies": list(ESSENTIAL_COOKIES),
         "base_url": f"{base}/v1" if base else "",
         "config": {"site": CFG.site_url, "cdp_port": CFG.cdp_port,
+                   "engine_mode": CFG.engine_mode,
                    "image_timeout": CFG.image_timeout,
                    "video_timeout": CFG.video_timeout,
                    "host": CFG.host, "port": CFG.port,
@@ -2553,22 +2564,23 @@ async def run_keepalive_all(force: bool = False) -> dict:
 
 
 def _warmup_browser_sync():
-    """后台静默预热浏览器与首个可用账号的 WebSocket 隧道，使重启后首条请求也秒回。"""
+    """后台静默预热引擎与首个可用账号的 Noise/WebSocket 隧道，使重启后首条请求也秒回。"""
     if getattr(engine, "current_acc_id", None) and engine.page is not None:
         return
     if not GEN_LOCK.acquire(blocking=False):
         return
+    tag = "协议预热" if CFG.engine_mode == "protocol" else "浏览器预热"
     acc = None
     try:
         acc = ACCOUNT_POOL.acquire(rotate=False, timeout=0.1, record_use=False)
-        log.info("【浏览器预热】正在后台预热账号 %s (%s) 的热备标签页...", acc.get("label"), acc["id"])
+        log.info("【%s】正在后台预热账号 %s (%s) 的连接...", tag, acc.get("label"), acc["id"])
         _bind_account_proxy(acc)
         refreshed = _renew_and_persist(acc["id"], wake_vm=True, force=False) or acc
         engine.start()
         engine.ensure_page(refreshed["cookies"], refreshed.get("cookies_exp"), account_id=acc["id"])
-        log.info("【浏览器预热】账号 %s (%s) 热备标签页与 WebSocket 已就绪", acc.get("label"), acc["id"])
+        log.info("【%s】账号 %s (%s) 会话与 Noise/WebSocket 已就绪", tag, acc.get("label"), acc["id"])
     except Exception as exc:  # noqa: BLE001
-        log.warning("【浏览器预热】预热异常: %s", exc)
+        log.warning("【%s】预热异常: %s", tag, exc)
     finally:
         # Warmup runs in a worker thread; do not retain its account reservation or page.
         engine.close_current_page()
@@ -2630,7 +2642,8 @@ REPO_REF = os.environ.get("MUSE2API_REPO_REF", "main")
 REPO_URL = f"https://github.com/{REPO_SLUG}"
 MANAGED_DEPLOYMENT = os.environ.get("MUSE2API_MANAGED_DEPLOYMENT", "0") == "1"
 TRACKED_REPO_PATHS = [
-    "app.py", "engine.py", "store.py", "cdp.py", "config.py", "proxy.py",
+    "app.py", "engine.py", "protocol_engine.py", "noise_transport.py",
+    "store.py", "cdp.py", "config.py", "proxy.py",
     "generation_timing.py", "thumbnails.py", "GENERATION_QUEUE.md", "VERSION_REPORTING.md",
     "admin.html", "README.md", "version.json", "requirements.txt",
     "Dockerfile", "docker-compose.yml", ".env.example", ".gitignore",
@@ -2889,6 +2902,7 @@ async def admin_repo_push(payload: dict = Body(default={}), _=Depends(auth)):
 
 @app.on_event("startup")
 async def _startup():
+    log.info("muse2api 启动中，当前引擎模式: %s", CFG.engine_mode)
     for task in list(store.tasks.values()):
         if task.get("kind") in ("image", "video") and task.get("status") in ("queued", "processing"):
             store.update_task(task["id"], status="failed", error="服务重启中断了任务，请重新提交")

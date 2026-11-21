@@ -2429,8 +2429,10 @@ async function loadStatus(){
     renderGenerationQueue(d.generation_queue, d.config);
     $('pSvc').className = 'pill on';
     $('pSvc').innerHTML = '<span class="led"></span>服务 <b>正常</b>';
-    $('pBr').className = 'pill ' + (d.browser_running ? 'on' : 'off');
-    $('pBr').innerHTML = `<span class="led"></span>浏览器 <b>${d.browser_running ? '运行中' : '空闲'}</b>`;
+    const engRunning = d.engine_running ?? d.browser_running;
+    const engLabel = d.engine_mode === 'protocol' ? '协议引擎' : '浏览器';
+    $('pBr').className = 'pill ' + (engRunning ? 'on' : 'off');
+    $('pBr').innerHTML = `<span class="led"></span>${engLabel} <b>${engRunning ? '运行中' : '空闲'}</b>`;
     $('sMedia').textContent = d.media_count ?? 0;
     if (d.base_url){ $('dBase').textContent = d.base_url; $('inBase').value = d.base_url; }
   }catch(e){
