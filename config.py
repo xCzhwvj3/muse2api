@@ -36,6 +36,12 @@ def _env(key: str, default: str) -> str:
     return os.environ.get(key, default)
 
 
+def _engine_mode() -> str:
+    """解析引擎运行模式，只在配置入口做一次合法化：protocol（默认纯协议）或 browser。"""
+    raw = _env("MUSE2API_ENGINE", "protocol").strip().lower()
+    return "browser" if raw == "browser" else "protocol"
+
+
 def _detect_chromium() -> str:
     """优先使用 MUSE2API_CHROMIUM；若未设置或路径不存在，则自动探测系统已安装的 Chromium/Chrome。"""
     configured = os.environ.get("MUSE2API_CHROMIUM", "").strip()
@@ -67,6 +73,13 @@ class Config:
     base_dir: str = field(default_factory=lambda: _env("MUSE2API_HOME", _DEFAULT_BASE_DIR))
     host: str = field(default_factory=lambda: _env("MUSE2API_HOST", "0.0.0.0"))
     port: int = field(default_factory=lambda: int(_env("MUSE2API_PORT", "18610")))
+
+    # 引擎模式：protocol（纯协议 Noise_XX + HTTP-over-Noise，无需 Chromium）或 browser（旧版 CDP）
+    engine_mode: str = field(default_factory=_engine_mode)
+    noise_url: str = field(
+        default_factory=lambda: _env("MUSE2API_NOISE_URL", "wss://hatch.metaaivm.com/v1/noise").strip()
+        or "wss://hatch.metaaivm.com/v1/noise"
+    )
 
     # 浏览器
     chromium: str = field(default_factory=_detect_chromium)

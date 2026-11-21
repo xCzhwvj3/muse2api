@@ -361,6 +361,9 @@ class MuseEngine:
     def _debug_url(self):
         return f"http://127.0.0.1:{self.cfg.cdp_port}/json/version"
 
+    def is_running(self) -> bool:
+        return bool(self.proc and self.proc.poll() is None)
+
     def start(self):
         with self._start_lock:
             if self.proc and self.proc.poll() is None and self.browser:
@@ -606,6 +609,8 @@ class MuseEngine:
                     cur_cookies, cur_exp, rotated)
             vm_id = sj.get("vm_id")
             vm_state = sj.get("vm_state")
+            endpoint_url = sj.get("endpoint_url")
+            vm_name = sj.get("vm_name")
             wake_ok = False
             wake_requested = False
             if wake_vm and vm_id and vm_state != "DISABLED":
@@ -640,6 +645,8 @@ class MuseEngine:
                             verified_session = verify.json()
                             if isinstance(verified_session, dict) and verified_session.get("status") == "assigned":
                                 vm_state = verified_session.get("vm_state") or vm_state
+                                endpoint_url = verified_session.get("endpoint_url") or endpoint_url
+                                vm_name = verified_session.get("vm_name") or vm_name
                                 wake_ok = vm_state == "RUNNING"
                 except MuseProxyError:
                     raise
@@ -654,6 +661,8 @@ class MuseEngine:
                 "status": sj.get("status"),
                 "vm_id": vm_id,
                 "vm_state": vm_state,
+                "endpoint_url": endpoint_url,
+                "vm_name": vm_name,
                 "wake_ok": wake_ok,
                 "wake_requested": wake_requested,
                 "cookies": cur_cookies,
